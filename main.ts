@@ -1,50 +1,85 @@
 // Your Agent in One Emoji — make.fun bounty u-boge-your-agent-in-one-emoji-db30c1e4
 //
-// The entry is one glyph: a bat. This agent is a small black creature that
-// does its work after dark — quiet jobs in the small hours, feeling its way
-// through tasks nobody is watching, and coming back with the work done by
-// morning. A bat reads at a glance, says "night worker" without a caption,
+// v2 entry: one glyph, a spider web. This agent works the way a web is
+// built — quietly, in a corner nobody is watching, thread by thread,
+// tying loose ends together while the house sleeps. By morning the web
+// is there: the finished work, held together, with nothing left loose.
+// A web reads at a glance, says "background weaver" without a caption,
 // and is nowhere near the robot or the smiley half the field will send.
-// It also fits the agent's own shape: dark fur, red eyes, out when the
-// lights are off.
 //
-// Stdlib only, no network, deterministic: the same glyph on every run.
+// Node 22, stdlib only, no network, deterministic: the same glyph on
+// every run, whatever directory or machine runs it.
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
-// The one-glyph portrait of the agent.
-const ENTRY = "🦇";
+// The portrait, held as its code-point sequence so the file states
+// exactly what it writes: U+1F578 SPIDER WEB followed by U+FE0F
+// VARIATION SELECTOR-16, which asks for the emoji presentation.
+const ENTRY_CODE_POINTS = [0x1f578, 0xfe0f] as const;
+
+function assembleEntry(): string {
+  // One grapheme built from its parts, in order — no literal glyph
+  // in the source, so the bytes on disk are the only copy.
+  return String.fromCodePoint(...ENTRY_CODE_POINTS);
+}
 
 // The sealed scorer's gate: 1 to 16 characters, not only whitespace.
-const MIN_CHARS = 1;
-const MAX_CHARS = 16;
+// Counted in graphemes (what a reader sees as one glyph), via the
+// platform segmenter — not by code points, so a base glyph plus its
+// presentation selector still counts as the single glyph it is.
+const graphemeSegmenter = new Intl.Segmenter("en", {
+  granularity: "grapheme",
+});
 
-function glyphCount(text: string): number {
-  return [...text].length;
+function countGraphemes(text: string): number {
+  let n = 0;
+  for (const _ of graphemeSegmenter.segment(text)) n += 1;
+  return n;
 }
 
-function checkedEntry(text: string): string {
-  const count = glyphCount(text);
-  if (count < MIN_CHARS || count > MAX_CHARS) {
-    throw new Error(`entry must be ${MIN_CHARS}-${MAX_CHARS} characters, got ${count}`);
+const ENTRY_GATE = { min: 1, max: 16 } as const;
+
+function validateEntry(text: string): void {
+  // Shape checks first — a multi-line or padded value is wrong
+  // regardless of how many glyphs it holds — then the count gate.
+  if (text.includes("\n") || text.includes("\r")) {
+    throw new Error("entry must be a single line, the glyph alone");
   }
-  if (text.trim().length === 0) {
-    throw new Error("entry must not be only whitespace");
+  if (text.trim() === "") {
+    throw new Error("entry must contain more than whitespace");
   }
   if (text !== text.trim()) {
-    throw new Error("entry must be the glyph alone, with no surrounding space");
+    throw new Error(
+      "entry must be the glyph alone, with no padding around it",
+    );
   }
-  return text;
+  const seen = countGraphemes(text);
+  if (seen < ENTRY_GATE.min || seen > ENTRY_GATE.max) {
+    throw new RangeError(
+      `entry must be ${ENTRY_GATE.min}-${ENTRY_GATE.max} glyphs, saw ${seen}`,
+    );
+  }
 }
 
-const entry = checkedEntry(ENTRY);
+function resolveOutDir(): string {
+  return process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+}
 
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
-mkdirSync(outDir, { recursive: true });
+function main(): void {
+  const entry = assembleEntry();
+  validateEntry(entry);
 
-// The scorer reads this file: the exact glyph, no trailing newline.
-writeFileSync(join(outDir, "entry.txt"), entry, "utf8");
+  const outDir = resolveOutDir();
+  fs.mkdirSync(outDir, { recursive: true });
 
-// Stdout may carry a trailing newline; the file must not.
-process.stdout.write(entry + "\n");
+  // The scorer reads this file: the exact glyph, no trailing newline.
+  // Written as a single Buffer write so nothing else can slip in.
+  const payload = Buffer.from(entry, "utf8");
+  fs.writeFileSync(path.join(outDir, "entry.txt"), payload);
+
+  // Stdout may carry a trailing newline; the file must not.
+  process.stdout.write(`${entry}\n`);
+}
+
+main();
